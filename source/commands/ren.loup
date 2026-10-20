@@ -1,0 +1,130 @@
+@mode(host.dual)
+
+# ren (and rename): renames entries in place. The source may be a pattern
+# (every matching file or directory is renamed); the new name may not hold
+# a path, and its wildcards keep parts of each old name (commands/
+# transform.loup). Planning is pure; run_ren renames and reports.
+
+from appinfo import (EXIT_OK, EXIT_FAILURE);
+from cli.args import (Options);
+from commands.transform import (transform_name);
+from io.fs import (isDir, listDir);
+from win.messages import (MSG_ACCESS_DENIED, MSG_FILE_NOT_FOUND, MSG_INVALID_NAME, MSG_PATH_NOT_FOUND,
+    MSG_SYNTAX);
+from win.paths import (fs_path, join_path, split_path, strip_trailing_separators);
+from win.wildcard import (MATCH_ALL, has_wildcards, list_matches, wildcard_in_directory);
+
+pub const MSG_DUPLICATE: string = "A duplicate file name exists, or the file cannot be found.";
+
+# One rename: `old_name` to `renamed` in `dir` (fs form, "" = current).
+pub struct Rename {
+    pub dir: string;
+    pub old_name: string;
+    pub renamed: string;
+}
+
+pub struct Plan {
+    pub renames: list[Rename];
+    pub error: string;        # "" or the message that stops ren
+}
+
+func make_rename(dir: string, old_name: string, renamed: string): Rename {
+    return Rename(dir = dir, old_name = old_name, renamed = renamed);
+}
+
+func plan_error(message: string): Plan {
+    let none: list[Rename] = [];
+    return Plan(renames = none, error = message);
+}
+
+# Whether `dir` has an entry called `name` (also a dangling symbolic link,
+# which exists() does not see).
+pub func has_entry(dir: string, name: string): bool {
+    let base = if (dir.len() == 0) { "." } else { dir };
+    if (!isDir(base)) {
+        return false;
+    }
+    return listDir(base).contains(name);
+}
+
+# The new name of `old` for a target that may hold wildcards.
+pub func new_name(old: string, target: string): string {
+    if (has_wildcards(target)) {
+        return transform_name(old, target);
+    }
+    return target;
+}
+
+# Plans `ren SOURCE TARGET`.
+pub func plan_ren(source: string, target: string): Plan {
+    if (target.index_of("/") >= 0 or target.index_of("\\") >= 0) {
+        return plan_error(MSG_SYNTAX);
+    }
+    if (wildcard_in_directory(source)) {
+        return plan_error(MSG_INVALID_NAME);
+    }
+    let parts = split_path(strip_trailing_separators(fs_path(source)));
+    if (parts.dir.len() > 0 and !isDir(parts.dir)) {
+        return plan_error(MSG_PATH_NOT_FOUND);
+    }
+    var names: list[string] = [];
+    if (has_wildcards(parts.name)) {
+        names = list_matches(parts.dir, parts.name, MATCH_ALL);
+    } else if (parts.name.len() > 0 and has_entry(parts.dir, parts.name)) {
+        names.push(parts.name);
+    }
+    if (names.len() == 0) {
+        return plan_error(MSG_FILE_NOT_FOUND);
+    }
+    var renames: list[Rename] = [];
+    for (old in names) {
+        renames.push(make_rename(parts.dir, old, new_name(old, target)));
+    }
+    return Plan(renames = renames, error = "");
+}
+
+func try_rename(src: string, dst: string): void {
+    try {
+        runtime.fs().rename(src, dst);
+    } catch (Exception as e) {
+    }
+}
+
+# Carries out one rename; "" when done (or nothing to do), else the message.
+pub func apply_rename(r: Rename): string {
+    if (r.renamed == r.old_name) {
+        return "";
+    }
+    if (r.renamed.len() == 0 or r.renamed == "." or r.renamed == "..") {
+        return MSG_INVALID_NAME;
+    }
+    if (has_entry(r.dir, r.renamed)) {
+        return MSG_DUPLICATE;
+    }
+    try_rename(join_path(r.dir, r.old_name), join_path(r.dir, r.renamed));
+    if (has_entry(r.dir, r.old_name) or !has_entry(r.dir, r.renamed)) {
+        return MSG_ACCESS_DENIED;
+    }
+    return "";
+}
+
+pub func run_ren(opts: Options): int {
+    if (opts.operands.len() != 2) {
+        printErr(MSG_SYNTAX);
+        return EXIT_FAILURE;
+    }
+    let plan = plan_ren(opts.operands[0], opts.operands[1]);
+    if (plan.error.len() > 0) {
+        printErr(plan.error);
+        return EXIT_FAILURE;
+    }
+    var status = EXIT_OK;
+    for (r in plan.renames) {
+        let failure = apply_rename(r);
+        if (failure.len() > 0) {
+            printErr(failure);
+            status = EXIT_FAILURE;
+        }
+    }
+    return status;
+}

@@ -1,0 +1,63 @@
+@mode(host.dual)
+
+# Tests for planning and applying renames (commands/ren.loup), in trees
+# under build/tmp/.
+
+from debug.assert import (expect, expectEq);
+from io.fs import (createDir, writeText, removeDir, isDir, isFile);
+from win.messages import (MSG_FILE_NOT_FOUND, MSG_INVALID_NAME, MSG_PATH_NOT_FOUND, MSG_SYNTAX);
+from commands.ren import (Plan, plan_ren, apply_rename, has_entry, new_name, MSG_DUPLICATE);
+
+func make_tree(root: string): void {
+    if (isDir(root)) {
+        removeDir(root);
+    }
+    createDir(root + "/sub");
+    createDir(root + "/dir.txt");
+    writeText(root + "/a.txt", "a\n");
+    writeText(root + "/B.TXT", "b\n");
+    writeText(root + "/a1.log", "1\n");
+}
+
+func pairs(plan: Plan): string {
+    var out: list[string] = [];
+    for (r in plan.renames) {
+        out.push(r.old_name + ">" + r.renamed);
+    }
+    return out.join(",");
+}
+
+func test_new_name(): void {
+    expectEq(new_name("a.txt", "b.txt"), "b.txt", "literal");
+    expectEq(new_name("a.txt", "*.bak"), "a.bak", "wildcards");
+}
+
+func test_plan(): void {
+    let root = "build/tmp/ren_plan";
+    make_tree(root);
+    expectEq(pairs(plan_ren(root + "\\a.txt", "z.txt")), "a.txt>z.txt", "one file");
+    expectEq(pairs(plan_ren(root + "/*.txt", "*.bak")), "a.txt>a.bak,B.TXT>B.bak,dir.txt>dir.bak", "files and directories, any case");
+    expectEq(pairs(plan_ren(root + "/a?.log", "b?.log")), "a1.log>b1.log", "question marks");
+    expectEq(plan_ren(root + "/sub/", "x").renames[0].old_name, "sub", "a directory with a separator");
+    expectEq(plan_ren(root + "/a.txt", "sub\\z.txt").error, MSG_SYNTAX, "no path in the new name");
+    expectEq(plan_ren(root + "/none.txt", "z.txt").error, MSG_FILE_NOT_FOUND, "missing");
+    expectEq(plan_ren(root + "/b.txt", "z.txt").error, MSG_FILE_NOT_FOUND, "names are exact");
+    expectEq(plan_ren(root + "/*.none", "*.x").error, MSG_FILE_NOT_FOUND, "no match");
+    expectEq(plan_ren(root + "/no/a.txt", "z.txt").error, MSG_PATH_NOT_FOUND, "missing directory");
+    expectEq(plan_ren(root + "/s*/a.txt", "z.txt").error, MSG_INVALID_NAME, "wildcard in a directory");
+    removeDir(root);
+}
+
+func test_apply(): void {
+    let root = "build/tmp/ren_apply";
+    make_tree(root);
+    let plan = plan_ren(root + "/a.txt", "z.txt");
+    expectEq(apply_rename(plan.renames[0]), "", "renamed");
+    expect(isFile(root + "/z.txt") and !has_entry(root, "a.txt"), "on disk");
+    expectEq(apply_rename(plan_ren(root + "/z.txt", "B.TXT").renames[0]), MSG_DUPLICATE, "duplicate");
+    expect(isFile(root + "/z.txt"), "kept");
+    expectEq(apply_rename(plan_ren(root + "/z.txt", "z.txt").renames[0]), "", "same name");
+    expectEq(apply_rename(plan_ren(root + "/z.txt", "*.").renames[0]), "", "z.txt to z");
+    expect(isFile(root + "/z"), "extension dropped");
+    removeDir(root);
+}

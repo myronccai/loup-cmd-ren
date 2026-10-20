@@ -1,12 +1,18 @@
-# template Loup commandline application
+# loup-cmd-ren
 
-A GitHub template for a command-line application written in
-[Loup](https://code-craft.ai/references/loup). It includes argument parsing,
-command dispatch, a sample `hello` command, tests, a native build and a CI
-workflow.
+The Windows `ren` (and `rename`) command recreated in
+[Loup](https://code-craft.ai/references/loup): rename files and
+directories, including cmd's wildcard-to-wildcard renames
+(`ren *.txt *.bak`, `ren img?.jpg pic?.jpg`), with its messages and
+ERRORLEVELs, on Linux.
 
-After creating a repository from this template, work through
-[REPOSITORY_TODOS.md](REPOSITORY_TODOS.md).
+Part of the **loup-cmd** series of example applications: classic Linux and
+Windows commands, and projects for each Loup execution mode, each in its own
+repository under [myronccai](https://github.com/myronccai?tab=repositories&q=loup-cmd).
+This one is `host.dual` Loup built as a native binary. It uses the shared
+Windows code in [`source/win/`](source/win/) (switch parser, wildcard
+matcher, path helpers, messages), copied from
+[loup-cmd-type](https://github.com/myronccai/loup-cmd-type).
 
 ## Requirements
 
@@ -14,70 +20,109 @@ After creating a repository from this template, work through
 
   ```sh
   curl -fsSL https://github.com/code-craft-ai-company/loup-releases/releases/latest/download/loup-install.sh | sh
-  loup --version
   ```
 
-- `make`
-- `clang` 17 or later for native builds. Native builds are supported on Linux
-  x86-64 and arm64, and are a preview on macOS and Windows.
+- `make`, and `clang` 17 or later for the native build.
 
 ## Usage
 
 ```sh
-make run ARGS="--help"            # run from source
-make run ARGS="hello Ann --shout"
-make check                        # type-check the program
-make test                         # run the tests in tests/
-make build                        # native binary: build/myapp
-make ci                           # check, test, build and smoke-test the binary
-make clean
+make build                     # native binary build/ren, and build/rename (a symlink to it)
+make ci                        # check, unit tests, build, end-to-end tests
+make run ARGS="a.txt b.txt"    # run from source with loup run
 ```
+
+Quote operands that contain `\`, `*` or `?` so that the Linux shell passes
+them through: cmd does not expand wildcards, the command does.
 
 ```text
-$ build/myapp --help
-usage: myapp [OPTIONS] COMMAND [ARGS...]
-
-A command-line application written in Loup.
-
-Commands:
-  hello [NAME]          Print a greeting (NAME defaults to 'world')
-  help                  Show this help
-
-Options:
-  -g, --greeting TEXT   Greeting used by 'hello' (default: Hello)
-      --shout           Print the greeting in upper case
-  -v, --verbose         Print diagnostic messages to stderr
-  -h, --help            Show this help and exit
-  -V, --version         Show the version and exit
+$ ls demo
+chapter.draft.md
+img1.jpg
+img2.jpg
+notes.txt
+photos2023
+todo.txt
+$ build/ren 'demo\*.txt' '*.bak'
+$ build/ren 'demo\img?.jpg' 'pic?.jpg'
+$ build/ren 'demo\chapter.*' 'final.*'
+$ build/ren 'demo\photos2023' photos
+$ ls demo
+final.draft.md
+notes.bak
+photos
+pic1.jpg
+pic2.jpg
+todo.bak
+$ build/ren 'demo\notes.bak' todo.bak; echo "ERRORLEVEL $?"
+A duplicate file name exists, or the file cannot be found.
+ERRORLEVEL 1
+$ build/ren 'demo\todo.bak' 'demo\x.bak'
+The syntax of the command is incorrect.
+$ build/rename 'demo\missing.txt' x.txt
+The system cannot find the file specified.
 ```
 
-Exit status: `0` success, `1` runtime failure, `2` usage error.
+`ren [path]name newname`
+
+- `name` is a file or directory, or a pattern with `*` and `?` in its last
+  component (Windows rules, any case), which renames every matching file
+  and directory.
+- `newname` stays in the same directory: a path in it is a syntax error.
+  Its wildcards keep parts of each old name, by cmd's rules, read left to
+  right against the old name:
+
+  | In `newname` | Does |
+  |---|---|
+  | `?` | keeps the next character, unless it is a `.` (then nothing) |
+  | `*` at the end, or `*?` | keeps the rest of the name |
+  | `*c` | keeps everything up to and including the **last** `c` (case-sensitive); without a `c`, keeps the rest and adds `c` |
+  | `.` | skips past the next `.` in the old name and writes `.` |
+  | any other character | writes itself in place of one old character |
+
+  Trailing dots and spaces are dropped. Examples: `a.b.txt` with `*.bak` is
+  `a.b.bak`; `a1.log` with `b?.log` is `b1.log`; `file.tar.gz` with
+  `new.*` is `new.tar.gz`; `report.txt` with `old_*` is `old_rt.txt`;
+  `a.txt` with `*.` is `a`.
+- ren prints nothing when it succeeds. A new name that already exists is
+  refused with `A duplicate file name exists, or the file cannot be found.`
+  and the other renames go on.
+- There are no switches: `/?` prints a short help, every other argument is a
+  name (also `/X` and `-X`), and `--` ends switch parsing. `--help` and
+  `--version` work as the only argument.
+
+Exit status (ERRORLEVEL): `0` when every rename was done, `1` otherwise.
+
+## Differences from the original
+
+- `rename` is a symlink to the same binary (`build/rename`); both print
+  `ren` in `--version`.
+- Names are case-sensitive on Linux: `ren A.TXT x` does not find `a.txt`,
+  and renaming to a name that differs only in case is a real rename (on
+  Windows both names are the same file). Patterns ignore case.
+- No 8.3 short names, so `*.txt` does not match `a.txtx` (cmd matches it
+  through the short name `A~1.TXT`).
+- A pattern renames directories as well as files.
+- A failed rename for another reason (permissions) is reported as `Access
+  is denied.`
+- `/?` prints a short help text of this recreation, not Windows' own.
+  Messages end with LF, not CRLF.
 
 ## Layout
 
 ```text
-package.lppkg            # Loup manifest
-Makefile                 # run, check, test, build, ci, clean
-source/                  # the application's Loup code
-├── main.loup            # entry point
-├── cli/                 # argument parsing, help text, command dispatch
-└── commands/            # one module per command
-tests/                   # *_test.loup files
-specs/                   # feature specs: requirements, design, tasks
-skills/loup-programmer/  # agent skill for writing Loup
+source/main.loup               # entry point
+source/appinfo.loup            # name, version, exit statuses
+source/cli/args.loup           # no switches; /? and -- via win.switches
+source/cli/usage.loup          # /? and --version text
+source/cli/app.loup            # run(): parse, dispatch, exit status
+source/commands/ren.loup       # plan_ren(), apply_rename(), run_ren()
+source/commands/transform.loup # transform_name(): cmd's wildcard rename rules
+source/win/                    # shared Windows code: switches, wildcards, paths, messages
+tests/*_test.loup              # unit tests (make test); transform_test.loup is the rules table
+tests/e2e.sh                   # end-to-end tests of build/ren (make e2e)
+specs/ren/                     # requirements, design, tasks
 ```
 
-[AGENTS.md](AGENTS.md) has the full layout, every build and test command, and
-the steps for adding a command.
-
-## Notes on the toolchain
-
-- On Linux x86-64, `loup` is the self-hosted driver and `loup-bootstrap` is
-  Stage0. `check` and `test` use `loup-bootstrap`; on other platforms both
-  names run the same tool. The Makefile handles this.
-- Modules import each other by their path under `source/`
-  (`from cli.args import (Options);`). Tests import them the same way, which
-  is why `make test` puts `source/` on `LOUPPATH`.
-- The Wasm build (`loup-bootstrap build`) is experimental: modules that use
-  `i"..."` interpolation build but trap at run time, so this template builds
-  native binaries.
+[AGENTS.md](AGENTS.md) has every build and test command and the conventions
+for changing the code.
