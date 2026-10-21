@@ -1,8 +1,11 @@
 @mode(host.dual)
 
-# Command-line parsing for ren. ren has no switches of its own: `/?` asks
-# for help, and every other argument (including `/X` and `-X`) is a name,
+# Command-line parsing for ren. ren has no switches of its own: `/?` asks for
+# help, and every other argument (including `/X` and `-X`) is a name,
 # following the Windows switch convention in win/switches.loup.
+#
+# Runtime: host.dual. Compiled into the native binary build/ren by
+# `make build`; `loup run source/main.loup` interprets the same code.
 
 from win.switches import (SwitchSpec, parse_switches, switch_error_message);
 

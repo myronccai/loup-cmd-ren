@@ -1,9 +1,20 @@
 @mode(host.dual)
 
 # ren (and rename): renames entries in place. The source may be a pattern
-# (every matching file or directory is renamed); the new name may not hold
-# a path, and its wildcards keep parts of each old name (commands/
-# transform.loup). Planning is pure; run_ren renames and reports.
+# (every matching file or directory is renamed); the new name may not hold a
+# path, and its wildcards keep parts of each old name
+# (commands/transform.loup).
+#
+# Runtime: host.dual. Compiled into the native binary build/ren by
+# `make build`; `loup run source/main.loup` interprets the same code. Renames
+# go through runtime.fs().rename (io.fs's `rename` aborts native builds),
+# which fails silently natively and throws in Stage0, so each one is checked
+# by listing the directory afterwards.
+#
+# Structure: plan_ren() turns the two operands into a Plan (the renames, or
+# the message that stops ren) without changing anything; apply_rename()
+# carries out one Rename and returns its message; run_ren() is the only
+# function that prints.
 
 from appinfo import (EXIT_OK, EXIT_FAILURE);
 from cli.args import (Options);
@@ -67,6 +78,8 @@ pub func plan_ren(source: string, target: string): Plan {
     if (parts.dir.len() > 0 and !isDir(parts.dir)) {
         return plan_error(MSG_PATH_NOT_FOUND);
     }
+    # A pattern renames every match, files and directories alike; a plain
+    # name only has to be listed in its directory (a dangling link counts).
     var names: list[string] = [];
     if (has_wildcards(parts.name)) {
         names = list_matches(parts.dir, parts.name, MATCH_ALL);
