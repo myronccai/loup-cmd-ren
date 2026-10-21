@@ -1,7 +1,8 @@
 @mode(host.dual)
 
 # Unit tests for planning and applying renames (commands/ren.loup), in trees
-# under build/tmp/.
+# under build/tmp/, including a dangling symbolic link (skipped with
+# testing.skipTest where `ln -s` cannot make one).
 #
 # Runtime: host.dual, run by the test runner: `make test` interprets this file
 # with `loup-bootstrap test --no-parallel` (Stage0, source/ on LOUPPATH), one
@@ -10,6 +11,7 @@
 from debug.assert import (expect, expectEq);
 from io.fs import (createDir, writeText, removeDir, isDir, isFile);
 from win.messages import (MSG_FILE_NOT_FOUND, MSG_INVALID_NAME, MSG_PATH_NOT_FOUND, MSG_SYNTAX);
+from testing import (skipTest);
 from commands.ren import (Plan, plan_ren, apply_rename, has_entry, new_name, MSG_DUPLICATE);
 
 func make_tree(root: string): void {
@@ -63,5 +65,21 @@ func test_apply(): void {
     expectEq(apply_rename(plan_ren(root + "/z.txt", "z.txt").renames[0]), "", "same name");
     expectEq(apply_rename(plan_ren(root + "/z.txt", "*.").renames[0]), "", "z.txt to z");
     expect(isFile(root + "/z"), "extension dropped");
+    removeDir(root);
+}
+
+# A dangling symbolic link is an entry of its directory even though
+# exists() does not see it, and ren renames the link itself.
+func test_dangling_link(): void {
+    let root = "build/tmp/ren_link";
+    make_tree(root);
+    if (exec(["ln", "-s", "nowhere", root + "/gone.lnk"]).exit_code != 0) {
+        removeDir(root);
+        skipTest("cannot make symbolic links with ln -s");
+    }
+    expect(has_entry(root, "gone.lnk"), "listed");
+    expectEq(pairs(plan_ren(root + "/gone.lnk", "still.lnk")), "gone.lnk>still.lnk", "planned");
+    expectEq(apply_rename(plan_ren(root + "/gone.lnk", "still.lnk").renames[0]), "", "renamed");
+    expect(has_entry(root, "still.lnk") and !has_entry(root, "gone.lnk"), "the link itself moved");
     removeDir(root);
 }

@@ -89,17 +89,17 @@ pub func plan_ren(source: string, target: string): Plan {
     if (names.len() == 0) {
         return plan_error(MSG_FILE_NOT_FOUND);
     }
-    var renames: list[Rename] = [];
-    for (old in names) {
-        renames.push(make_rename(parts.dir, old, new_name(old, target)));
-    }
+    let renames: list[Rename] = [make_rename(parts.dir, old, new_name(old, target)) for old in names];
     return Plan(renames = renames, error = "");
 }
 
+# The rename itself (runtime.fs().rename: io.fs's own `rename` aborts native
+# builds). Stage0 throws when it fails, native builds fail silently, so the
+# exception is dropped and apply_rename() looks at the directory instead.
 func try_rename(src: string, dst: string): void {
     try {
         runtime.fs().rename(src, dst);
-    } catch (Exception as e) {
+    } catch (Exception) {
     }
 }
 
